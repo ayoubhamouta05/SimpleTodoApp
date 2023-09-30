@@ -8,7 +8,7 @@ import java.io.Serializable
 @Entity(tableName = "tasks_table")
 data class ItemTasks(
     @PrimaryKey(autoGenerate = true)
-    var id : Int,
+    var id : Int ,
     var type: String ?,
     var taskText : String ,
     var isFinished : Boolean ,

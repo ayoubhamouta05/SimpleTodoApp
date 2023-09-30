@@ -1,26 +1,15 @@
 package com.example.todo.adapter
 
-import android.annotation.SuppressLint
-import android.content.res.Resources
 import android.graphics.Paint
-import android.util.Log
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.annotation.ColorRes
-import androidx.annotation.DrawableRes
 import androidx.recyclerview.widget.AsyncListDiffer
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.example.todo.R
-import com.example.todo.databinding.ActivityTasksDetailsBinding
 import com.example.todo.databinding.TaskItemBinding
 import com.example.todo.db.model.ItemTasks
-import com.example.todo.ui.TasksDetails
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 class TasksAdapter() : RecyclerView.Adapter<TasksAdapter.ViewHolder>() {
 

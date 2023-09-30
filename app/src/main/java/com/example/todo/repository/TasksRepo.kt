@@ -10,13 +10,15 @@ class TasksRepo(
 
     fun getTasks() = todoDatabase.todoDao().getAllTasks()
 
-    suspend fun deleteTask(task :ItemTasks) = todoDatabase.todoDao().deleteTask(task)
+    fun deleteTask(task :ItemTasks) = todoDatabase.todoDao().deleteTask(task)
 
-    suspend fun upsertTask(task : ItemTasks) = todoDatabase.todoDao().upsert(task)
+    fun upsertTask(task : ItemTasks) = todoDatabase.todoDao().upsert(task)
 
     fun getImportantTasks() = todoDatabase.todoDao().getImportantItem()
 
-    fun getFinishedTasks() = todoDatabase.todoDao().getFinishedItem()
+    fun getCompletedTasks() = todoDatabase.todoDao().getCompletedItem()
+
+    fun searchTasks(searchQuery : String ) = todoDatabase.todoDao().searchTasks(searchQuery)
 
 
 

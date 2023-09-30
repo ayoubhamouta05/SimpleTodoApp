@@ -1,131 +1,194 @@
-package com.example.todo.ui
+package com.example.todo.ui.fragments
 
-import android.app.*
+import android.app.AlarmManager
+import android.app.Dialog
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.graphics.Paint
-import android.os.Build
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
+import androidx.fragment.app.Fragment
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import android.widget.Toast
-import androidx.lifecycle.*
+import androidx.core.content.ContextCompat.getSystemService
+import androidx.core.widget.addTextChangedListener
+import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.todo.R
-
 import com.example.todo.adapter.TasksAdapter
-import com.example.todo.databinding.ActivityTasksDetailsBinding
 import com.example.todo.databinding.AddTaskBinding
 import com.example.todo.databinding.DeleteOptionDialogBinding
+import com.example.todo.databinding.FragmentTasksDetailsBinding
 import com.example.todo.databinding.UncheckBoxOptionBinding
-import com.example.todo.db.TodoDatabase
 import com.example.todo.db.model.ItemTasks
-import com.example.todo.repository.TasksRepo
+import com.example.todo.notification.NotificationReceiver
+import com.example.todo.ui.activities.MainActivity
 import com.example.todo.viewModel.TodoViewModel
-import com.example.todo.viewModel.TodoViewModelProvider
 import com.google.android.material.snackbar.Snackbar
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import java.sql.Time
 import java.text.SimpleDateFormat
 import java.util.Calendar
-import kotlin.time.Duration.Companion.days
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.days
+import java.util.Locale
 
-class TasksDetails() : AppCompatActivity() {
-    private lateinit var binding: ActivityTasksDetailsBinding
-    lateinit var viewModel: TodoViewModel
 
-    private lateinit var tasksAdapter: TasksAdapter
+class TasksDetailsFragment : Fragment() {
+    private lateinit var binding: FragmentTasksDetailsBinding
+    private lateinit var viewModel: TodoViewModel
+    val args by navArgs<TasksDetailsFragmentArgs>()
+    lateinit var tasksType: String
+    lateinit var tasksAdapter: TasksAdapter
     private val list = mutableListOf<ItemTasks>()
 
 
-    override fun onCreate(savedInstanceState: Bundle?) {
 
-        binding = ActivityTasksDetailsBinding.inflate(layoutInflater)
-        super.onCreate(savedInstanceState)
-        setContentView(binding.root)
+    override fun onCreateView(
+        inflater: LayoutInflater, container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        binding = FragmentTasksDetailsBinding.inflate(layoutInflater)
+        return binding.root
+    }
 
-        setupActivity()
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        args.tasksType?.let {
+            tasksType = it
+        }
+        viewModel = (activity as MainActivity).viewModel
+        setupRv()
+        getTasks(tasksType)
+        binding.tasksType.text = tasksType
+
+        tasksAdapter.setOnImportantImgClickListener {
+
+            setImportantTaskAction(it)
+
+
+        }
+        tasksAdapter.setOnCheckClickListener {
+            finishingTaskAction(it)
+        }
 
         binding.fabAddTask.setOnClickListener {
             showAlertDialog()
         }
 
-        tasksAdapter.setOnCheckClickListener { itemTasks ->
-            finishingTaskAction(itemTasks)
-        }
-
-        tasksAdapter.setOnImportantImgClickListener { itemTasks ->
-            setImportantTaskAction(itemTasks)
-        }
-
         deleteOrModifyOption()
 
 
-        deleteTasksWhenTimeEnd()
+
+        binding.searchEd.addTextChangedListener { editText->
+            if (!editText.isNullOrEmpty()){
+                viewModel.searchTasks(editText.toString()).observe(viewLifecycleOwner) { searchList ->
+                    tasksAdapter.list = searchList
+                }
+            }else{
+                getTasks(tasksType)
+            }
+
+        }
 
     }
 
-    private fun setupActivity() {
-        val tasksRepo = TasksRepo(TodoDatabase(this))
-        val todoViewModelProviderFactory = TodoViewModelProvider(tasksRepo)
 
-        setupRecyclerView()
-
-        val taskType = intent.extras?.getString("task_type")
-        val taskImage = intent.extras?.getInt("task_image")
-
-        binding.tvTypeTask.text = taskType
-        binding.taskTypeImg.setImageResource(taskImage!!)
-
-        lifecycleScope.launch {
-            viewModel = ViewModelProvider(
-                this@TasksDetails,
-                todoViewModelProviderFactory
-            )[TodoViewModel::class.java]
-            getTasks(taskType!!)
+    private fun setupRv() {
+        tasksAdapter = TasksAdapter()
+        binding.rvTasks.apply {
+            adapter = tasksAdapter
+            layoutManager = LinearLayoutManager(requireContext())
         }
     }
 
+    private fun getTasks(tasksType: String) {
+        when (tasksType) {
+            "All Tasks" -> {
+                viewModel.allTasks.observe(viewLifecycleOwner) { allTasks ->
+                    tasksAdapter.list = allTasks
+                }
+            }
 
-    private fun setImportantTaskAction(itemTasks: ItemTasks) {
+            "Important Tasks" -> {
+                viewModel.importantTasks.observe(viewLifecycleOwner) { importantTasks ->
+                    tasksAdapter.list = importantTasks
+                }
+            }
 
-        itemTasks.isImportant = !itemTasks.isImportant
-
-        lifecycleScope.launch {
-            viewModel.upsertTask(itemTasks)
-        }
-
-        if (itemTasks.isImportant) {
-            Toast.makeText(
-                this@TasksDetails,
-                "Task Added To Important : You Must Finish This",
-                Toast.LENGTH_SHORT
-            ).show()
-            list.add(itemTasks)
-
-           // todo : make the scheduleNotification show to me more than one notification
-            //scheduleNotification(time,itemTasks.taskText)
-        }
-        else{
-            if(list.contains(itemTasks)){
-                list.remove(itemTasks)
+            "Completed Tasks" -> {
+                viewModel.completedTasks.observe(viewLifecycleOwner) { completedTasks ->
+                    tasksAdapter.list = completedTasks
+                }
             }
         }
 
     }
 
+    private fun setImportantTaskAction(itemTasks: ItemTasks) {
+
+        itemTasks.isImportant = !itemTasks.isImportant
+
+        viewModel.upsertTask(itemTasks)
+
+        if (itemTasks.isImportant) {
+            Toast.makeText(
+                requireContext(),
+                "Task Added To Important : You Must Finish This",
+                Toast.LENGTH_SHORT
+            ).show()
+            list.add(itemTasks)
+            // todo : make the scheduleNotification show to me more than one notification
+
+
+        } else {
+            if (list.contains(itemTasks)) {
+                list.remove(itemTasks)
+            }
+        }
+
+
+
+    }
+
+    private fun scheduleNotification(task : ItemTasks) {
+        val alarmManager = requireContext().getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val contentText = "You must finish that : \n ${task.taskText}"
+        val id = task.id
+
+        /**
+         * simplify time
+         */
+        val dateFormat = SimpleDateFormat("EEEE, dd-MMM-yyyy hh-mm a", Locale.getDefault())
+        val date = dateFormat.parse(task.timeTodo)
+
+        // Set the time when the notification should be triggered
+        val calendar = Calendar.getInstance()
+        calendar.time = date!!
+
+        // Create an Intent that will be triggered when the alarm fires
+        val intent = Intent(requireActivity(), NotificationReceiver::class.java)
+        intent.putExtra("TaskID",id)
+
+        intent.putExtra("contentText",contentText)
+
+        // Pass a unique request code
+       // val pendingIntent = task.pendingIntent ?: PendingIntent.getBroadcast(requireContext(), id, intent, PendingIntent.FLAG_UPDATE_CURRENT)
+
+        // Schedule the alarm
+       // alarmManager.setExact(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+    }
+
     private fun finishingTaskAction(itemTasks: ItemTasks) {
 
-        // todo : make a special adapter for Finished Tasks
-
         val dialogBinding = UncheckBoxOptionBinding.inflate(layoutInflater)
-        val dialog = Dialog(this)
+        val dialog = Dialog(requireContext())
         dialog.setContentView(dialogBinding.root)
         dialog.setCancelable(false)
         dialog.create()
+
 
         if (itemTasks.isFinished) {
             dialog.show()
@@ -135,76 +198,28 @@ class TasksDetails() : AppCompatActivity() {
             dialogBinding.btnLetChecked.setOnClickListener {
                 itemTasks.isFinished = true
                 dialog.dismiss()
-                lifecycleScope.launch {
-                    viewModel.upsertTask(itemTasks)
-                }
+                viewModel.upsertTask(itemTasks)
             }
         }
 
         itemTasks.isFinished = !itemTasks.isFinished
+        viewModel.upsertTask(itemTasks)
 
 
-        lifecycleScope.launch {
-            viewModel.upsertTask(itemTasks)
-        }
         if (itemTasks.isFinished) {
-
             Toast.makeText(
-                this@TasksDetails,
+                requireContext(),
                 "Congratulation for finishing this Task",
                 Toast.LENGTH_SHORT
             ).show()
-
-        }
-    }
-
-    private fun setupRecyclerView() {
-        tasksAdapter = TasksAdapter()
-        binding.rvTasks.apply {
-            adapter = tasksAdapter
-            layoutManager = LinearLayoutManager(this@TasksDetails)
-
-        }
-
-    }
-
-    private fun getTasks(taskType: String) {
-
-        when (taskType) {
-            "All Tasks" -> {
-                binding.tvTypeTask.text = "All Tasks"
-                lifecycleScope.launch {
-                    viewModel.allTasks.observe(this@TasksDetails) { ItemTasksList ->
-                        tasksAdapter.list = ItemTasksList
-                        binding.tvNumberTask.text = "${ItemTasksList.size} Tasks"
-                    }
-                }
-            }
-            "Important" -> {
-                lifecycleScope.launch {
-                    viewModel.importantTasks.observe(this@TasksDetails) { importantTasks ->
-                        tasksAdapter.list = importantTasks
-                        binding.tvNumberTask.text = "${importantTasks.size} Tasks"
-                    }
-                }
-            }
-            else -> {
-                lifecycleScope.launch {
-                    viewModel.finishedTasks.observe(this@TasksDetails) { ItemTasksList ->
-                        tasksAdapter.list = ItemTasksList
-                        binding.tvNumberTask.text = "${ItemTasksList.size} Tasks"
-                    }
-                }
-            }
         }
 
     }
 
     private fun showAlertDialog() {
 
-        val taskType = intent.extras?.getString("task_type")
         val dialogBinding = AddTaskBinding.inflate(layoutInflater)
-        val dialog = Dialog(this)
+        val dialog = Dialog(requireContext())
         dialog.setContentView(dialogBinding.root)
         dialog.setCancelable(false)
 
@@ -224,7 +239,7 @@ class TasksDetails() : AppCompatActivity() {
             day.value = Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
 
             hour.maxValue = 60
-            hour.value= Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            hour.value = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
             minute.maxValue = 60
             minute.value = Calendar.getInstance().get(Calendar.MINUTE)
@@ -291,7 +306,7 @@ class TasksDetails() : AppCompatActivity() {
                             viewModel.upsertTask(
                                 ItemTasks(
                                     0,
-                                    taskType,
+                                    tasksType,
                                     dialogBinding.edAddText.text.toString(),
                                     false,
                                     isImportant = false,
@@ -325,7 +340,7 @@ class TasksDetails() : AppCompatActivity() {
         dialog.create()
         dialog.show()
 
-        getTasks(taskType!!)
+        getTasks(tasksType)
     }
 
     private fun deleteOrModifyOption() {
@@ -334,7 +349,7 @@ class TasksDetails() : AppCompatActivity() {
 
             val dialogBinding = DeleteOptionDialogBinding.inflate(layoutInflater)
             dialogBinding.edModifyText.setText(itemTask.taskText)
-            val dialog = Dialog(this)
+            val dialog = Dialog(requireContext())
             dialog.setContentView(dialogBinding.root)
             dialog.setCancelable(true)
             dialog.show()
@@ -370,7 +385,7 @@ class TasksDetails() : AppCompatActivity() {
                 hour.maxValue = 60
                 hour.value = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
-                minute.maxValue =60
+                minute.maxValue = 60
                 minute.value = Calendar.getInstance().get(Calendar.MINUTE)
 
                 month.setOnValueChangedListener { _, _, numberPicker ->
@@ -421,13 +436,14 @@ class TasksDetails() : AppCompatActivity() {
                         dialogBinding.minute.value
                     )
                     //todo : make the simpleDateFormat write today instead of the current day
-                    val simpleDateFormat =SimpleDateFormat("EEEE,  dd-MMM-yyyy  hh-mm a")
-                    val dateTime :String?
-                    if(dialogBinding.year.value == Calendar.getInstance().get(Calendar.YEAR)&&
-                        dialogBinding.day.value == Calendar.getInstance().get(Calendar.DAY_OF_MONTH)){
+                    val simpleDateFormat = SimpleDateFormat("EEEE,  dd-MMM-yyyy  hh-mm a")
+                    val dateTime: String?
+                    if (dialogBinding.year.value == Calendar.getInstance().get(Calendar.YEAR) &&
+                        dialogBinding.day.value == Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
+                    ) {
                         simpleDateFormat.applyPattern("'today',  dd-MMM-yyyy  hh-mm a")
                         dateTime = simpleDateFormat.format(selectedCalendar.timeInMillis)
-                    }else{
+                    } else {
                         dateTime = simpleDateFormat.format(selectedCalendar.timeInMillis)
                     }
 
@@ -489,46 +505,32 @@ class TasksDetails() : AppCompatActivity() {
 
     }
 
-    private fun deleteTasksWhenTimeEnd() {
-
-        lifecycleScope.launch {
-            viewModel.allTasks.observe(this@TasksDetails) { allTasks ->
-                val df = SimpleDateFormat("EEEE,  dd-MMM-yyyy  hh-mm a")
-
-    //todo : delete the task when his time is ended
-                for (itemTask in allTasks) {
-                    val time = df.parse(itemTask.timeTodo)!!
-                    val currentDay = Calendar.getInstance()
-                    currentDay.set(
-                        Calendar.getInstance().get(Calendar.YEAR),
-                        Calendar.getInstance().get(Calendar.MONTH),
-                        Calendar.getInstance().get(Calendar.DAY_OF_MONTH)-1,
-                        23,
-                        59,
-                        59
-                    )
-
-                    if(time.before(currentDay.time)){
-                        runBlocking {
-                            viewModel.deleteTask(itemTask)
-                        }
-                    }
-                }
-
-            }
-        }
-    }
-
-
-
-
-
-
-
-
-
+//    private fun deleteTasksWhenTimeEnd() {
+//
+//
+//        viewModel.allTasks.observe(viewLifecycleOwner) { allTasks ->
+//            val df = SimpleDateFormat("EEEE,  dd-MMM-yyyy  hh-mm a")
+//
+//            //todo : delete the task when his time is ended
+//            for (itemTask in allTasks) {
+//                val time = df.parse(itemTask.timeTodo)!!
+//                val currentDay = Calendar.getInstance()
+//                currentDay.set(
+//                    Calendar.getInstance().get(Calendar.YEAR),
+//                    Calendar.getInstance().get(Calendar.MONTH),
+//                    Calendar.getInstance().get(Calendar.DAY_OF_MONTH) -1,
+//                    23,
+//                    59,
+//                    59
+//                )
+//
+//                if (time.before(currentDay.time)) {
+//                    viewModel.deleteTask(itemTask)
+//                }
+//            }
+//
+//        }
+//    }
 
 
 }
-
-
