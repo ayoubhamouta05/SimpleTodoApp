@@ -1,9 +1,7 @@
 package com.example.todo.db.model
 
-import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import java.io.Serializable
 
 @Entity(tableName = "tasks_table")
 data class ItemTasks(

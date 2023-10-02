@@ -12,9 +12,9 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.core.content.ContextCompat.getSystemService
 import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.todo.R
@@ -28,10 +28,11 @@ import com.example.todo.notification.NotificationReceiver
 import com.example.todo.ui.activities.MainActivity
 import com.example.todo.viewModel.TodoViewModel
 import com.google.android.material.snackbar.Snackbar
-import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.launch
+import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 
 
@@ -41,8 +42,6 @@ class TasksDetailsFragment : Fragment() {
     val args by navArgs<TasksDetailsFragmentArgs>()
     lateinit var tasksType: String
     lateinit var tasksAdapter: TasksAdapter
-    private val list = mutableListOf<ItemTasks>()
-
 
 
     override fun onCreateView(
@@ -65,10 +64,7 @@ class TasksDetailsFragment : Fragment() {
         binding.tasksType.text = tasksType
 
         tasksAdapter.setOnImportantImgClickListener {
-
             setImportantTaskAction(it)
-
-
         }
         tasksAdapter.setOnCheckClickListener {
             finishingTaskAction(it)
@@ -80,21 +76,19 @@ class TasksDetailsFragment : Fragment() {
 
         deleteOrModifyOption()
 
-
-
-        binding.searchEd.addTextChangedListener { editText->
-            if (!editText.isNullOrEmpty()){
-                viewModel.searchTasks(editText.toString()).observe(viewLifecycleOwner) { searchList ->
-                    tasksAdapter.list = searchList
-                }
-            }else{
+        binding.searchEd.addTextChangedListener { editText ->
+            if (!editText.isNullOrEmpty()) {
+                viewModel.searchTasks(editText.toString())
+                    .observe(viewLifecycleOwner) { searchList ->
+                        tasksAdapter.list = searchList
+                    }
+            } else {
                 getTasks(tasksType)
             }
 
         }
 
     }
-
 
     private fun setupRv() {
         tasksAdapter = TasksAdapter()
@@ -131,54 +125,73 @@ class TasksDetailsFragment : Fragment() {
 
         itemTasks.isImportant = !itemTasks.isImportant
 
-        viewModel.upsertTask(itemTasks)
-
         if (itemTasks.isImportant) {
             Toast.makeText(
                 requireContext(),
                 "Task Added To Important : You Must Finish This",
                 Toast.LENGTH_SHORT
             ).show()
-            list.add(itemTasks)
-            // todo : make the scheduleNotification show to me more than one notification
 
+            scheduleNotification(itemTasks)
 
         } else {
-            if (list.contains(itemTasks)) {
-                list.remove(itemTasks)
-            }
+
+            cancelNotification(itemTasks)
+
         }
 
-
+        viewModel.upsertTask(itemTasks)
 
     }
 
-    private fun scheduleNotification(task : ItemTasks) {
+    private fun scheduleNotification(task: ItemTasks) {
         val alarmManager = requireContext().getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val contentText = "You must finish that : \n ${task.taskText}"
+        val contentText = "You must finish that : \n${task.taskText}"
         val id = task.id
 
         /**
          * simplify time
          */
         val dateFormat = SimpleDateFormat("EEEE, dd-MMM-yyyy hh-mm a", Locale.getDefault())
-        val date = dateFormat.parse(task.timeTodo)
 
-        // Set the time when the notification should be triggered
-        val calendar = Calendar.getInstance()
-        calendar.time = date!!
+        try {
+            val timeTodo =
+                task.timeTodo.replace("today", SimpleDateFormat("EEEE", Locale.getDefault()).format(Date()))
 
-        // Create an Intent that will be triggered when the alarm fires
+            val date = dateFormat.parse(timeTodo)
+
+            // Set the time when the notification should be triggered
+            val calendar = Calendar.getInstance()
+            calendar.time = date!!
+
+            // Create an Intent that will be triggered when the alarm fires
+            val intent = Intent(requireActivity(), NotificationReceiver::class.java)
+            intent.putExtra("TaskID", id)
+            intent.putExtra("contentText", contentText)
+
+            // Pass a unique request code
+            val pendingIntent = PendingIntent
+                .getBroadcast(requireContext(), id, intent, PendingIntent.FLAG_UPDATE_CURRENT)
+
+            // Schedule the alarm
+            alarmManager.setExact(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+        } catch (e: ParseException) {
+
+            Log.e("TasksDetailsFragment", e.printStackTrace().toString())
+        }
+    }
+    private fun cancelNotification(task: ItemTasks) {
+        // Retrieve the PendingIntent for the specified notification ID
+        val alarmManager = requireContext().getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = Intent(requireActivity(), NotificationReceiver::class.java)
-        intent.putExtra("TaskID",id)
 
-        intent.putExtra("contentText",contentText)
+        val pendingIntent = PendingIntent
+            .getBroadcast(requireContext(), task.id, intent, PendingIntent.FLAG_UPDATE_CURRENT)
 
-        // Pass a unique request code
-       // val pendingIntent = task.pendingIntent ?: PendingIntent.getBroadcast(requireContext(), id, intent, PendingIntent.FLAG_UPDATE_CURRENT)
-
-        // Schedule the alarm
-       // alarmManager.setExact(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+        if (pendingIntent != null) {
+            // Cancel the alarm associated with the PendingIntent
+            alarmManager.cancel(pendingIntent)
+        }
     }
 
     private fun finishingTaskAction(itemTasks: ItemTasks) {
@@ -188,7 +201,6 @@ class TasksDetailsFragment : Fragment() {
         dialog.setContentView(dialogBinding.root)
         dialog.setCancelable(false)
         dialog.create()
-
 
         if (itemTasks.isFinished) {
             dialog.show()
@@ -205,13 +217,13 @@ class TasksDetailsFragment : Fragment() {
         itemTasks.isFinished = !itemTasks.isFinished
         viewModel.upsertTask(itemTasks)
 
-
         if (itemTasks.isFinished) {
             Toast.makeText(
                 requireContext(),
                 "Congratulation for finishing this Task",
                 Toast.LENGTH_SHORT
             ).show()
+            cancelNotification(itemTasks)
         }
 
     }
@@ -435,7 +447,7 @@ class TasksDetailsFragment : Fragment() {
                         dialogBinding.hour.value,
                         dialogBinding.minute.value
                     )
-                    //todo : make the simpleDateFormat write today instead of the current day
+                    // make the simpleDateFormat write today instead of the current day
                     val simpleDateFormat = SimpleDateFormat("EEEE,  dd-MMM-yyyy  hh-mm a")
                     val dateTime: String?
                     if (dialogBinding.year.value == Calendar.getInstance().get(Calendar.YEAR) &&
@@ -459,33 +471,30 @@ class TasksDetailsFragment : Fragment() {
                             .show()
                         dialog.dismiss()
                     } else if (selectedCalendar.after(currentCalendar)) {
-                        lifecycleScope.launch {
 
-                            viewModel.upsertTask(
-                                ItemTasks(
-                                    itemTask.id,
-                                    itemTask.type,
-                                    dialogBinding.edModifyText.text.toString(),
-                                    itemTask.isFinished,
-                                    itemTask.isImportant,
-                                    dateTime
-                                )
-                            )
-                            dialog.dismiss()
-                            Snackbar.make(
-                                binding.root,
-                                "The Task Is Updated Successfully",
-                                Snackbar.LENGTH_SHORT
-                            )
-                                .setBackgroundTint(
-                                    resources.getColor(
-                                        R.color.snackBarSuccess,
-                                        null
-                                    )
-                                )
-                                .show()
+                        itemTask.timeTodo = dateTime
+                        itemTask.taskText = dialogBinding.edModifyText.text.toString()
+                        tasksAdapter.notifyDataSetChanged()
+
+                        viewModel.upsertTask(itemTask)
+
+                        if (itemTask.isImportant) {
+                            scheduleNotification(itemTask)
                         }
 
+                        dialog.dismiss()
+                        Snackbar.make(
+                            binding.root,
+                            "The Task Is Updated Successfully",
+                            Snackbar.LENGTH_SHORT
+                        )
+                            .setBackgroundTint(
+                                resources.getColor(
+                                    R.color.snackBarSuccess,
+                                    null
+                                )
+                            )
+                            .show()
                     } else {
                         Snackbar.make(
                             binding.root,
@@ -504,33 +513,5 @@ class TasksDetailsFragment : Fragment() {
         }
 
     }
-
-//    private fun deleteTasksWhenTimeEnd() {
-//
-//
-//        viewModel.allTasks.observe(viewLifecycleOwner) { allTasks ->
-//            val df = SimpleDateFormat("EEEE,  dd-MMM-yyyy  hh-mm a")
-//
-//            //todo : delete the task when his time is ended
-//            for (itemTask in allTasks) {
-//                val time = df.parse(itemTask.timeTodo)!!
-//                val currentDay = Calendar.getInstance()
-//                currentDay.set(
-//                    Calendar.getInstance().get(Calendar.YEAR),
-//                    Calendar.getInstance().get(Calendar.MONTH),
-//                    Calendar.getInstance().get(Calendar.DAY_OF_MONTH) -1,
-//                    23,
-//                    59,
-//                    59
-//                )
-//
-//                if (time.before(currentDay.time)) {
-//                    viewModel.deleteTask(itemTask)
-//                }
-//            }
-//
-//        }
-//    }
-
 
 }
